@@ -31,6 +31,13 @@ export const COLORS = {
     border: '#059669',
     headerBg: 'rgba(16, 185, 129, 0.12)',
   },
+  listen: {
+    primary: '#3B82F6',
+    dark: '#1E3A5F',
+    bg: '#0F1B2E',
+    border: '#2563EB',
+    headerBg: 'rgba(59, 130, 246, 0.12)',
+  },
   surface: {
     bg: '#0F172A',
     paper: '#1E293B',

@@ -33,6 +33,7 @@ import TaskNode from './components/nodes/TaskNode';
 import BeginNode from './components/nodes/BeginNode';
 import RerouteNode from './components/nodes/RerouteNode';
 import StartNode from './components/nodes/StartNode';
+import ListenNode from './components/nodes/ListenNode';
 import Toolbar from './components/Toolbar';
 import Sidebar from './components/Sidebar';
 import PropertiesPanel from './components/PropertiesPanel';
@@ -53,6 +54,7 @@ const nodeTypes = {
   begin: BeginNode,
   reroute: RerouteNode,
   start: StartNode,
+  listen: ListenNode,
 };
 
 function Flow() {
@@ -181,7 +183,11 @@ function Flow() {
       (sourceNode.type === 'agent' && targetNode.type === 'task' && params.targetHandle === 'agent') ||
       (sourceNode.type === 'task' && targetNode.type === 'task' && params.targetHandle === 'exec-in') ||
       (sourceNode.type === 'begin' && targetNode.type === 'task' && params.targetHandle === 'exec-in') ||
+      (sourceNode.type === 'begin' && targetNode.type === 'listen' && params.targetHandle === 'listen-in') ||
       (sourceNode.type === 'start' && targetNode.type === 'task' && params.targetHandle === 'exec-in') ||
+      (sourceNode.type === 'start' && targetNode.type === 'listen' && params.targetHandle === 'listen-in') ||
+      (sourceNode.type === 'listen' && targetNode.type === 'task' && params.targetHandle === 'exec-in') ||
+      (sourceNode.type === 'listen' && targetNode.type === 'listen' && params.targetHandle === 'listen-in') ||
       targetNode.type === 'reroute' ||
       (sourceNode.type === 'reroute' && (
         (sourceNode.data.claimedType === 'execution' && params.targetHandle === 'exec-in') ||
@@ -196,7 +202,8 @@ function Flow() {
       (sourceNode.data?.claimedType === 'execution' && targetNode.type === 'reroute') ||
       (sourceNode.type === 'reroute' && sourceNode.data?.claimedType === 'execution') ||
       sourceNode.type === 'begin' ||
-      sourceNode.type === 'start';
+      sourceNode.type === 'start' ||
+      sourceNode.type === 'listen';
 
     const isAgentLine = params.targetHandle === 'agent' ||
       sourceNode.type === 'agent' ||
@@ -265,7 +272,7 @@ function Flow() {
 
     takeSnapshot(nodes, edges);
 
-    const defaults = type === 'agent' ? { ...DEFAULT_AGENT_DATA } : type === 'task' ? { ...DEFAULT_TASK_DATA } : type === 'start' ? { method_name: '', listen_events: [], router_events: [], node_type: 'start' as const } : {};
+    const defaults = type === 'agent' ? { ...DEFAULT_AGENT_DATA } : type === 'task' ? { ...DEFAULT_TASK_DATA } : type === 'start' ? { method_name: '', listen_events: [], router_events: [], node_type: 'start' as const } : type === 'listen' ? { method_name: '', listen_events: [], router_events: [], node_type: 'listen' as const } : {};
     const newNode: Node = {
       id: getId(),
       type,
@@ -598,6 +605,7 @@ function Flow() {
                 if (node.type === 'task') return COLORS.task.primary;
                 if (node.type === 'begin') return COLORS.begin.primary;
                 if (node.type === 'start') return COLORS.start.primary;
+                if (node.type === 'listen') return COLORS.listen.primary;
                 return COLORS.text.muted;
               }}
               maskColor={`${COLORS.surface.bg}cc`}

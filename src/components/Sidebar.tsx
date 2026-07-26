@@ -6,6 +6,7 @@ import {
 import PersonIcon from '@mui/icons-material/Person';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
+import HearingIcon from '@mui/icons-material/Hearing';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import SearchIcon from '@mui/icons-material/Search';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -327,6 +328,12 @@ export default function Sidebar({
             label="@start"
             icon={<PlayArrowRoundedIcon sx={{ fontSize: 16, color: COLORS.start.primary }} />}
             color={COLORS.start.primary}
+          />
+          <DraggableNode
+            type="listen"
+            label="@listen"
+            icon={<HearingIcon sx={{ fontSize: 16, color: COLORS.listen.primary }} />}
+            color={COLORS.listen.primary}
           />
         </Box>
       </Box>
