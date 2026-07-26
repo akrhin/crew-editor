@@ -22,7 +22,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import theme, { COLORS } from './theme';
 import {
-  AgentData, TaskData, CrewSettings, SavedGraph, SavedAgent, SavedTask,
+  AgentData, TaskData, FlowMethodData, FlowEdgeData, CrewSettings, SavedGraph, SavedAgent, SavedTask,
   DEFAULT_AGENT_DATA, DEFAULT_TASK_DATA, DEFAULT_CREW_SETTINGS, migrateNodeData,
 } from './types';
 import { generateAgentsYaml, generateTasksYaml, generatePythonCode } from './utils/export';
@@ -206,6 +206,11 @@ function Flow() {
 
     takeSnapshot(nodes, edges);
 
+    const isFlowSource = sourceNode.type === 'start' || sourceNode.type === 'listen' || sourceNode.type === 'router';
+    const edgeData: FlowEdgeData | undefined = isFlowSource
+      ? { event_names: sourceNode.type === 'router' ? (sourceNode.data as FlowMethodData).router_events?.slice() || [] : [], condition_type: 'single' }
+      : undefined;
+
     const isExecLine = params.targetHandle === 'exec-in' ||
       (sourceNode.data?.claimedType === 'execution' && targetNode.type === 'reroute') ||
       (sourceNode.type === 'reroute' && sourceNode.data?.claimedType === 'execution') ||
@@ -244,6 +249,7 @@ function Flow() {
         animated: isExecLine,
         style: edgeStyle,
         markerEnd: edgeMarker,
+        ...(edgeData ? { data: edgeData } : {}),
       };
       setEdges(eds => [...eds, newEdge]);
     } else {
@@ -253,6 +259,7 @@ function Flow() {
         animated: isExecLine,
         style: edgeStyle,
         markerEnd: edgeMarker,
+        ...(edgeData ? { data: edgeData } : {}),
       }, eds));
     }
   }, [nodes, edges, takeSnapshot]);
@@ -294,7 +301,7 @@ function Flow() {
   }, [project, nodes, edges, takeSnapshot]);
 
   // Update node data from properties panel
-  const updateNodeData = useCallback((nodeId: string, data: Partial<AgentData | TaskData>) => {
+  const updateNodeData = useCallback((nodeId: string, data: Partial<AgentData | TaskData | FlowMethodData>) => {
     setNodes(nds => nds.map(n =>
       n.id === nodeId ? { ...n, data: { ...n.data, ...data } } : n
     ));

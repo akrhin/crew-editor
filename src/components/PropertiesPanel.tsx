@@ -11,8 +11,11 @@ import AssignmentIcon from '@mui/icons-material/Assignment';
 import BuildIcon from '@mui/icons-material/Build';
 import TuneIcon from '@mui/icons-material/Tune';
 import LinkIcon from '@mui/icons-material/Link';
+import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
+import HearingIcon from '@mui/icons-material/Hearing';
+import AltRouteIcon from '@mui/icons-material/AltRoute';
 import {
-  AgentData, TaskData, CustomTool, AVAILABLE_TOOLS, AVAILABLE_LLMS, ToolInfo,
+  AgentData, TaskData, FlowMethodData, FlowNodeType, CustomTool, AVAILABLE_TOOLS, AVAILABLE_LLMS, ToolInfo,
 } from '../types';
 import { COLORS } from '../theme';
 
@@ -21,7 +24,7 @@ interface PropertiesPanelProps {
   nodes: Node[];
   edges: Edge[];
   customTools: CustomTool[];
-  onUpdateNodeData: (nodeId: string, data: Partial<AgentData | TaskData>) => void;
+  onUpdateNodeData: (nodeId: string, data: Partial<AgentData | TaskData | FlowMethodData>) => void;
   onClose: () => void;
 }
 
@@ -503,6 +506,57 @@ function TaskProperties({
   );
 }
 
+function FlowMethodProperties({
+  data,
+  onUpdate,
+  nodeType,
+}: {
+  data: FlowMethodData;
+  onUpdate: (field: string, value: unknown) => void;
+  nodeType: FlowNodeType;
+}) {
+  return (
+    <Box>
+      <TextField
+        label="Method Name"
+        fullWidth
+        value={data.method_name || ''}
+        onChange={(e) => onUpdate('method_name', e.target.value)}
+        sx={{ mb: 1.5 }}
+        inputProps={{ 'aria-label': 'Flow method name' }}
+      />
+
+      {nodeType === 'listen' && (
+        <TextField
+          label="Listen Events (comma-separated)"
+          fullWidth
+          value={(data.listen_events || []).join(', ')}
+          onChange={(e) => {
+            const events = e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean);
+            onUpdate('listen_events', events);
+          }}
+          placeholder="event1, event2, ..."
+          inputProps={{ 'aria-label': 'Listen events' }}
+        />
+      )}
+
+      {nodeType === 'router' && (
+        <TextField
+          label="Outgoing Events (comma-separated)"
+          fullWidth
+          value={(data.router_events || []).join(', ')}
+          onChange={(e) => {
+            const events = e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean);
+            onUpdate('router_events', events);
+          }}
+          placeholder="event1, event2, ..."
+          inputProps={{ 'aria-label': 'Router outgoing events' }}
+        />
+      )}
+    </Box>
+  );
+}
+
 export default function PropertiesPanel({
   selectedNode,
   nodes,
@@ -549,14 +603,36 @@ export default function PropertiesPanel({
     return { connectedAgentName: null, connectedTasks: [], contextTaskNames: [] };
   }, [selectedNode, nodes, edges, nodeType]);
 
-  if (!selectedNode || (nodeType !== 'agent' && nodeType !== 'task')) return null;
+  if (!selectedNode) return null;
+  if (nodeType !== 'agent' && nodeType !== 'task' && nodeType !== 'start' && nodeType !== 'listen' && nodeType !== 'router') return null;
 
-  const headerColor = nodeType === 'agent' ? COLORS.agent.primary : COLORS.task.primary;
-  const headerBg = nodeType === 'agent' ? COLORS.agent.headerBg : COLORS.task.headerBg;
-  const headerIcon = nodeType === 'agent'
-    ? <PersonIcon sx={{ fontSize: 18, color: headerColor }} />
-    : <AssignmentIcon sx={{ fontSize: 18, color: headerColor }} />;
-  const headerLabel = nodeType === 'agent' ? 'Agent Properties' : 'Task Properties';
+  const headerColor = nodeType === 'agent' ? COLORS.agent.primary
+    : nodeType === 'task' ? COLORS.task.primary
+    : nodeType === 'start' ? COLORS.start.primary
+    : nodeType === 'listen' ? COLORS.listen.primary
+    : nodeType === 'router' ? COLORS.router.primary
+    : COLORS.text.muted;
+
+  const headerBg = nodeType === 'agent' ? COLORS.agent.headerBg
+    : nodeType === 'task' ? COLORS.task.headerBg
+    : nodeType === 'start' ? COLORS.start.headerBg
+    : nodeType === 'listen' ? COLORS.listen.headerBg
+    : nodeType === 'router' ? COLORS.router.headerBg
+    : 'transparent';
+
+  const headerIcon = nodeType === 'agent' ? <PersonIcon sx={{ fontSize: 18, color: headerColor }} />
+    : nodeType === 'task' ? <AssignmentIcon sx={{ fontSize: 18, color: headerColor }} />
+    : nodeType === 'start' ? <PlayArrowRoundedIcon sx={{ fontSize: 18, color: headerColor }} />
+    : nodeType === 'listen' ? <HearingIcon sx={{ fontSize: 18, color: headerColor }} />
+    : nodeType === 'router' ? <AltRouteIcon sx={{ fontSize: 18, color: headerColor }} />
+    : null;
+
+  const headerLabel = nodeType === 'agent' ? 'Agent Properties'
+    : nodeType === 'task' ? 'Task Properties'
+    : nodeType === 'start' ? '@start Properties'
+    : nodeType === 'listen' ? '@listen Properties'
+    : nodeType === 'router' ? '@router Properties'
+    : 'Properties';
 
   const handleUpdate = (field: string, value: unknown) => {
     onUpdateNodeData(selectedNode.id, { [field]: value });
@@ -637,6 +713,27 @@ export default function PropertiesPanel({
             onUpdate={handleUpdate}
             connectedAgentName={connectionInfo.connectedAgentName}
             contextTaskNames={connectionInfo.contextTaskNames}
+          />
+        )}
+        {nodeType === 'start' && (
+          <FlowMethodProperties
+            data={nodeData as FlowMethodData}
+            onUpdate={handleUpdate}
+            nodeType="start"
+          />
+        )}
+        {nodeType === 'listen' && (
+          <FlowMethodProperties
+            data={nodeData as FlowMethodData}
+            onUpdate={handleUpdate}
+            nodeType="listen"
+          />
+        )}
+        {nodeType === 'router' && (
+          <FlowMethodProperties
+            data={nodeData as FlowMethodData}
+            onUpdate={handleUpdate}
+            nodeType="router"
           />
         )}
       </Box>
