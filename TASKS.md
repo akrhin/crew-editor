@@ -149,13 +149,13 @@
 
 | Задача | Статус | Когда |
 |--------|--------|-------|
-| 1.1 types.ts | [ ] | — |
-| 1.2 StartNode | [ ] | — |
-| 1.3 ListenNode | [ ] | — |
-| 1.4 RouterNode | [ ] | — |
-| 1.5 PropertiesPanel | [ ] | — |
-| 1.6 Sidebar | [ ] | — |
-| 1.7 Event-based рёбра | [ ] | — |
+|| 1.1 types.ts | [✓] | 26 июл |
+|| 1.2 StartNode | [✓] | 26 июл |
+|| 1.3 ListenNode | [✓] | 26 июл |
+|| 1.4 RouterNode | [→] | CrewAI работает |
+|| 1.5 PropertiesPanel | [ ] | — |
+|| 1.6 Sidebar | [ ] | — |
+|| 1.7 Event-based рёбра | [ ]"
 | 2.1 export.ts | [ ] | — |
 | 2.2 ExportModal | [ ] | — |
 | 3.1 Import | [ ] | — |

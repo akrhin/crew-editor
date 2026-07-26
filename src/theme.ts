@@ -38,6 +38,13 @@ export const COLORS = {
     border: '#2563EB',
     headerBg: 'rgba(59, 130, 246, 0.12)',
   },
+  router: {
+    primary: '#F59E0B',
+    dark: '#92400E',
+    bg: '#1C1507',
+    border: '#D97706',
+    headerBg: 'rgba(245, 158, 11, 0.12)',
+  },
   surface: {
     bg: '#0F172A',
     paper: '#1E293B',
