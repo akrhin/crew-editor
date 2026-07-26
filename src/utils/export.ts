@@ -1,5 +1,5 @@
 import { Node, Edge } from 'reactflow';
-import { AgentData, TaskData, CrewSettings, AVAILABLE_TOOLS } from '../types';
+import { AgentData, TaskData, FlowMethodData, FlowEdgeData, CrewSettings, AVAILABLE_TOOLS } from '../types';
 
 export function generateAgentsYaml(nodes: Node[], _edges: Edge[]): string {
   const agents = nodes.filter(n => n.type === 'agent');
@@ -253,4 +253,129 @@ function getTaskOrder(nodes: Node[], edges: Edge[]): string[] {
     });
 
   return orderedTasks;
+}
+
+export function generateFlowPython(nodes: Node[], edges: Edge[], crewSettings: CrewSettings): string {
+  const flowNodes = nodes.filter(n =>
+    n.type === 'start' || n.type === 'listen' || n.type === 'router'
+  );
+  if (flowNodes.length === 0) return '# No flow nodes defined';
+
+  const rawName = crewSettings.name || 'Generated Flow';
+  const className = rawName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+  const stateName = `${className}State`;
+
+  // State fields
+  const stateFields: string[] = [
+    '    query: str = ""',
+    '    result: str = ""',
+  ];
+
+  // Build a map from node id to method name for flow nodes
+  const nodeIdToMethod: Record<string, string> = {};
+  flowNodes.forEach(node => {
+    const d = node.data as FlowMethodData;
+    const methodName = d.method_name?.replace(/[^a-zA-Z0-9_]/g, '_') || `n_${node.id}`;
+    nodeIdToMethod[node.id] = methodName;
+  });
+
+  // Build methods
+  const methodBlocks: string[] = [];
+
+  // -- Start nodes --
+  flowNodes.filter(n => n.type === 'start').forEach(node => {
+    const methodName = nodeIdToMethod[node.id];
+    stateFields.push(`    ${methodName}: str = ""`);
+    methodBlocks.push(`    @start()
+    def ${methodName}(self):
+        """Start method for ${methodName}."""
+        self.state.${methodName} = "started"
+`);
+  });
+
+  // -- Listen nodes --
+  flowNodes.filter(n => n.type === 'listen').forEach(node => {
+    const d = node.data as FlowMethodData;
+    const methodName = nodeIdToMethod[node.id];
+    const incomingEdges = edges.filter(e => e.target === node.id);
+    const incomingEvents: string[] = [];
+    incomingEdges.forEach(e => {
+      const edgeData = e.data as FlowEdgeData | undefined;
+      if (edgeData?.event_names?.length) {
+        incomingEvents.push(...edgeData.event_names);
+      } else {
+        const srcMethod = nodeIdToMethod[e.source];
+        if (srcMethod) incomingEvents.push(srcMethod);
+      }
+    });
+    const events = incomingEvents.length > 0 ? incomingEvents : (d.listen_events || []);
+    stateFields.push(`    ${methodName}: str = ""`);
+
+    let listenDecorator: string;
+    if (events.length === 0) {
+      listenDecorator = `    @listen("${methodName}")`;
+    } else if (events.length === 1) {
+      listenDecorator = `    @listen("${events[0]}")`;
+    } else {
+      listenDecorator = `    @listen(or_(${events.map(e => `"${e}"`).join(', ')}))`;
+    }
+
+    let body: string;
+    if (d.agent && d.agent.name) {
+      const esc = (s: string) => s.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+      body = `        agent = Agent(
+            role="${esc(d.agent.role || '')}",
+            goal="${esc(d.agent.goal || '')}",
+            backstory="${esc(d.agent.backstory || '')}",
+        )
+        self.state.${methodName} = "processed"
+        return self.state.${methodName}`;
+    } else {
+      body = `        # TODO: implement ${methodName} logic
+        self.state.${methodName} = "processed"
+        return self.state.${methodName}`;
+    }
+
+    methodBlocks.push(`${listenDecorator}
+    def ${methodName}(self) -> str:
+${body}
+`);
+  });
+
+  // -- Router nodes --
+  flowNodes.filter(n => n.type === 'router').forEach(node => {
+    const d = node.data as FlowMethodData;
+    const methodName = nodeIdToMethod[node.id];
+    const events = d.router_events || [];
+    stateFields.push(`    ${methodName}: str = ""`);
+
+    const defaultRoute = events[0] || 'default';
+    methodBlocks.push(`    @router("${methodName}")
+    def ${methodName}(self, output) -> str:
+        # TODO: implement routing logic
+        return "${defaultRoute}"
+`);
+  });
+
+  return `"""${rawName} - Auto-generated Flow from Crew Editor"""
+
+from pydantic import BaseModel
+from crewai import Agent, LLM
+from crewai.flow import Flow
+from crewai.flow.flow import listen, or_, router, start
+from crewai.flow.persistence import persist, SQLiteFlowPersistence
+
+
+class ${stateName}(BaseModel):
+${stateFields.join('\n')}
+
+
+flow_persistence = SQLiteFlowPersistence()
+
+
+@persist(flow_persistence)
+class ${className}(Flow[${stateName}]):
+
+${methodBlocks.join('\n')}
+`;
 }
