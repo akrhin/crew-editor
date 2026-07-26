@@ -25,6 +25,7 @@ interface ToolbarProps {
   onLoad: () => void;
   onExportYaml: () => void;
   onExportPython: () => void;
+  onExportFlow: () => void;
   onCrewSettings: () => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -44,6 +45,7 @@ export default function Toolbar({
   onLoad,
   onExportYaml,
   onExportPython,
+  onExportFlow,
   onCrewSettings,
   onUndo,
   onRedo,
@@ -245,6 +247,16 @@ export default function Toolbar({
           <ListItemText>
             <Typography variant="body2">YAML Config</Typography>
             <Typography variant="caption" sx={{ color: COLORS.text.muted }}>agents.yaml + tasks.yaml</Typography>
+          </ListItemText>
+        </MenuItem>
+        <MenuItem
+          onClick={() => { onExportFlow(); setExportAnchor(null); }}
+          aria-label="Export as Flow Python"
+        >
+          <ListItemIcon><CodeIcon sx={{ fontSize: 18 }} /></ListItemIcon>
+          <ListItemText>
+            <Typography variant="body2">Flow Python</Typography>
+            <Typography variant="caption" sx={{ color: COLORS.text.muted }}>flow.py (CrewAI Flow)</Typography>
           </ListItemText>
         </MenuItem>
         <MenuItem

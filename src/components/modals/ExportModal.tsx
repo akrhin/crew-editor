@@ -14,7 +14,8 @@ interface ExportModalProps {
   agentsYaml: string;
   tasksYaml: string;
   pythonCode: string;
-  mode: 'yaml' | 'python';
+  flowPythonCode: string;
+  mode: 'yaml' | 'python' | 'flow';
 }
 
 function CodeBlock({ content, filename }: { content: string; filename: string }) {
@@ -111,18 +112,21 @@ export default function ExportModal({
   agentsYaml,
   tasksYaml,
   pythonCode,
+  flowPythonCode,
   mode,
 }: ExportModalProps) {
-  const [activeTab, setActiveTab] = useState(mode === 'yaml' ? 0 : 2);
+  const [activeTab, setActiveTab] = useState(mode === 'yaml' ? 0 : mode === 'flow' ? 1 : 2);
   const [yamlTab, setYamlTab] = useState(0);
 
   const handleDownloadAll = () => {
-    const files = activeTab <= 1
+    const files = activeTab === 0
       ? [
           { name: 'agents.yaml', content: agentsYaml },
           { name: 'tasks.yaml', content: tasksYaml },
         ]
-      : [{ name: 'crew.py', content: pythonCode }];
+      : activeTab === 1
+        ? [{ name: 'flow.py', content: flowPythonCode }]
+        : [{ name: 'crew.py', content: pythonCode }];
 
     files.forEach(({ name, content }) => {
       const blob = new Blob([content], { type: 'text/plain' });
@@ -171,6 +175,7 @@ export default function ExportModal({
           }}
         >
           <Tab label="YAML Config" value={0} />
+          <Tab label="Flow Python" value={1} />
           <Tab label="Python Code" value={2} />
         </Tabs>
       </Box>
@@ -202,6 +207,10 @@ export default function ExportModal({
           </Box>
         )}
 
+        {activeTab === 1 && (
+          <CodeBlock content={flowPythonCode} filename="flow.py" />
+        )}
+
         {activeTab === 2 && (
           <CodeBlock content={pythonCode} filename="crew.py" />
         )}
@@ -215,7 +224,7 @@ export default function ExportModal({
           startIcon={<DownloadIcon sx={{ fontSize: 16 }} />}
           aria-label="Download all files"
         >
-          Download {activeTab === 0 ? 'YAML Files' : 'Python File'}
+          Download {activeTab === 0 ? 'YAML Files' : activeTab === 1 ? 'Flow Python File' : 'Python File'}
         </Button>
       </DialogActions>
     </Dialog>

@@ -25,7 +25,7 @@ import {
   AgentData, TaskData, FlowMethodData, FlowEdgeData, CrewSettings, SavedGraph, SavedAgent, SavedTask,
   DEFAULT_AGENT_DATA, DEFAULT_TASK_DATA, DEFAULT_CREW_SETTINGS, migrateNodeData,
 } from './types';
-import { generateAgentsYaml, generateTasksYaml, generatePythonCode } from './utils/export';
+import { generateAgentsYaml, generateTasksYaml, generatePythonCode, generateFlowPython } from './utils/export';
 import useUndoRedo from './hooks/useUndoRedo';
 
 import AgentNode from './components/nodes/AgentNode';
@@ -73,7 +73,7 @@ function Flow() {
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [loadModalOpen, setLoadModalOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
-  const [exportMode, setExportMode] = useState<'yaml' | 'python'>('yaml');
+  const [exportMode, setExportMode] = useState<'yaml' | 'python' | 'flow'>('yaml');
   const [crewSettingsOpen, setCrewSettingsOpen] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [confirmModal, setConfirmModal] = useState<{
@@ -506,6 +506,7 @@ function Flow() {
   const agentsYaml = useMemo(() => generateAgentsYaml(nodes, edges), [nodes, edges]);
   const tasksYaml = useMemo(() => generateTasksYaml(nodes, edges), [nodes, edges]);
   const pythonCode = useMemo(() => generatePythonCode(nodes, edges, crewSettings), [nodes, edges, crewSettings]);
+  const flowPythonCode = useMemo(() => generateFlowPython(nodes, edges, crewSettings), [nodes, edges, crewSettings]);
 
   // Edge double-click: insert reroute node
   const onEdgeDoubleClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
@@ -561,6 +562,7 @@ function Flow() {
         onLoad={() => setLoadModalOpen(true)}
         onExportYaml={() => { setExportMode('yaml'); setExportModalOpen(true); }}
         onExportPython={() => { setExportMode('python'); setExportModalOpen(true); }}
+        onExportFlow={() => { setExportMode('flow'); setExportModalOpen(true); }}
         onCrewSettings={() => setCrewSettingsOpen(true)}
         onUndo={handleUndo}
         onRedo={handleRedo}
@@ -673,6 +675,7 @@ function Flow() {
         agentsYaml={agentsYaml}
         tasksYaml={tasksYaml}
         pythonCode={pythonCode}
+        flowPythonCode={flowPythonCode}
         mode={exportMode}
       />
 
