@@ -3,6 +3,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Проверка base path — CrewAI агенты любят перезаписывать на /crew_editor/
+if grep -q "base: '/crew_editor'" vite.config.ts; then
+  echo "⚠️  Fixing vite base — CrewAI reset to /crew_editor/"
+  sed -i "s|base: '/crew_editor/'|base: './'|" vite.config.ts
+  npm run build
+fi
+
 echo "→ Building..."
 npm run build
 
