@@ -23,6 +23,7 @@ interface ToolbarProps {
   onNew: () => void;
   onSave: () => void;
   onLoad: () => void;
+  onImport: () => void;
   onExportYaml: () => void;
   onExportPython: () => void;
   onExportFlow: () => void;
@@ -46,6 +47,7 @@ export default function Toolbar({
   onExportYaml,
   onExportPython,
   onExportFlow,
+  onImport,
   onCrewSettings,
   onUndo,
   onRedo,
@@ -212,6 +214,25 @@ export default function Toolbar({
       </Tooltip>
 
       <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+
+      {/* Import */}
+      <Tooltip title="Import Flow from Python">
+        <Button
+          size="small"
+          startIcon={<CodeIcon sx={{ fontSize: 16 }} />}
+          onClick={onImport}
+          aria-label="Import Flow from Python"
+          sx={{
+            color: COLORS.text.secondary,
+            fontSize: '0.75rem',
+            px: 1,
+            minWidth: 0,
+            '&:hover': { bgcolor: `${COLORS.surface.elevated}60` },
+          }}
+        >
+          Import
+        </Button>
+      </Tooltip>
 
       {/* Export */}
       <Tooltip title="Export crew">

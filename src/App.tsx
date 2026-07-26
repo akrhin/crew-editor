@@ -40,6 +40,7 @@ import Sidebar from './components/Sidebar';
 import PropertiesPanel from './components/PropertiesPanel';
 import ConfirmModal from './components/modals/ConfirmModal';
 import ExportModal from './components/modals/ExportModal';
+import ImportModal from './components/modals/ImportModal';
 import SaveModal from './components/modals/SaveModal';
 import LoadModal from './components/modals/LoadModal';
 import CrewSettingsModal from './components/modals/CrewSettingsModal';
@@ -73,6 +74,7 @@ function Flow() {
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [loadModalOpen, setLoadModalOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const [exportMode, setExportMode] = useState<'yaml' | 'python' | 'flow'>('yaml');
   const [crewSettingsOpen, setCrewSettingsOpen] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
@@ -563,6 +565,7 @@ function Flow() {
         onExportYaml={() => { setExportMode('yaml'); setExportModalOpen(true); }}
         onExportPython={() => { setExportMode('python'); setExportModalOpen(true); }}
         onExportFlow={() => { setExportMode('flow'); setExportModalOpen(true); }}
+        onImport={() => setImportModalOpen(true)}
         onCrewSettings={() => setCrewSettingsOpen(true)}
         onUndo={handleUndo}
         onRedo={handleRedo}
@@ -677,6 +680,17 @@ function Flow() {
         pythonCode={pythonCode}
         flowPythonCode={flowPythonCode}
         mode={exportMode}
+      />
+
+      <ImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImport={(importedNodes, importedEdges) => {
+          takeSnapshot(nodes, edges);
+          setNodes(importedNodes);
+          setEdges(importedEdges);
+          setSelectedNodeId(null);
+        }}
       />
 
       <CrewSettingsModal
