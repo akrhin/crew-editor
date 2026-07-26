@@ -62,6 +62,21 @@ export const DEFAULT_CUSTOM_TOOL: CustomTool = {
   mcpServerUrl: '',
 };
 
+export type FlowNodeType = 'start' | 'listen' | 'router' | 'legacy_begin' | 'legacy_agent' | 'legacy_task' | 'legacy_reroute';
+
+export interface FlowMethodData {
+  method_name: string;
+  node_type: FlowNodeType;
+  listen_events: string[];
+  router_events: string[];
+  agent?: AgentData;
+}
+
+export interface FlowEdgeData {
+  event_names: string[];
+  condition_type: 'single' | 'or_' | 'and_';
+}
+
 export interface CrewInput {
   name: string;
   description: string;
@@ -276,10 +291,15 @@ export const AVAILABLE_LLMS: LLMInfo[] = [
 ];
 
 export function migrateNodeData(node: Node): Node {
+  // Legacy type migration: old type names → legacy_* without data loss
+  if (node.type === 'begin') {
+    return { ...node, type: 'legacy_begin' };
+  }
   if (node.type === 'agent') {
     const data = node.data as Record<string, unknown>;
     return {
       ...node,
+      type: 'legacy_agent',
       data: {
         ...DEFAULT_AGENT_DATA,
         ...data,
@@ -294,6 +314,7 @@ export function migrateNodeData(node: Node): Node {
     const data = node.data as Record<string, unknown>;
     return {
       ...node,
+      type: 'legacy_task',
       data: {
         ...DEFAULT_TASK_DATA,
         ...data,

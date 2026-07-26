@@ -304,6 +304,31 @@ export default function Sidebar({
             color={COLORS.task.primary}
           />
         </Box>
+
+        <Typography
+          variant="caption"
+          sx={{
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            color: COLORS.text.muted,
+            fontSize: '0.6rem',
+            mt: 1.5,
+            mb: 0.5,
+            display: 'block',
+          }}
+        >
+          Flow
+        </Typography>
+
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+          <DraggableNode
+            type="start"
+            label="@start"
+            icon={<PlayArrowRoundedIcon sx={{ fontSize: 16, color: COLORS.start.primary }} />}
+            color={COLORS.start.primary}
+          />
+        </Box>
       </Box>
 
       <Divider sx={{ mx: 1.5 }} />

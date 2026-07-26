@@ -24,6 +24,13 @@ export const COLORS = {
     border: '#059669',
     headerBg: 'rgba(16, 185, 129, 0.12)',
   },
+  start: {
+    primary: '#10B981',
+    dark: '#065F46',
+    bg: '#071310',
+    border: '#059669',
+    headerBg: 'rgba(16, 185, 129, 0.12)',
+  },
   surface: {
     bg: '#0F172A',
     paper: '#1E293B',
