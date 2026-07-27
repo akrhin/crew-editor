@@ -1,0 +1,22 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: crew-editor-api
+    restart: unless-stopped
+    ports:
+      - "8766:8766"
+    volumes:
+      - ~/.hermes/crew-editor/projects:/root/.hermes/crew-editor/projects
+    environment:
+      - CREW_EDITOR_DATA_DIR=/root/.hermes/crew-editor/projects
+
+  frontend:
+    build: .
+    container_name: crew-editor
+    restart: unless-stopped
+    ports:
+      - "8999:80"
+    depends_on:
+      - backend

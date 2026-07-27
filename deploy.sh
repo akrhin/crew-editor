@@ -10,14 +10,16 @@ if grep -q "base: '/crew_editor'" vite.config.ts; then
   npm run build
 fi
 
-echo "→ Building..."
+echo "→ Building frontend..."
 npm run build
 
-echo "→ Deploying to ~/.hermes/local-docs/"
-rm -rf ~/.hermes/local-docs/*
-cp -r dist/* ~/.hermes/local-docs/
+echo "→ Building & deploying with Docker Compose..."
+sudo docker compose up --build -d --remove-orphans
 
-echo "→ Restarting server..."
-systemctl --user restart hermes-docs.service
+echo "→ Cleaning up old systemd service..."
+systemctl --user disable --now hermes-docs.service 2>/dev/null || true
+rm -f ~/.config/systemd/user/hermes-docs.service
+systemctl --user daemon-reload 2>/dev/null || true
 
-echo "→ OK! http://sintez.local:8999/"
+echo "→ OK! http://sintez.local:8999/ (frontend + API proxy)"
+echo "   API docs: http://sintez.local:8999/api/docs"

@@ -125,7 +125,7 @@
 - API: POST /save, GET /load, GET /list
 - Сохранение истории (опционально)
 
-### [ ] 3.3 Docker
+### [✓] 3.3 Docker
 - Dockerfile: nginx + статика
 - docker-compose.yml
 - Заменить systemd на compose
@@ -160,5 +160,5 @@
 | 2.2 ExportModal | [ ] | — |
 | 3.1 Import | [ ] | — |
 | 3.2 Backend | [✓] | 27 июл |
-| 3.3 Docker | [ ] | — |
+| 3.3 Docker | [✓] | 27 июл |
 | 4.1 gbrain | [ ] | — |
