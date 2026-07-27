@@ -120,7 +120,7 @@
 - AST-парсинг: найти `@start`, `@listen`, `@router`, Agent constructs
 - Восстановить весь граф с event-ребрами
 
-### [ ] 3.2 FastAPI бэкенд
+### [✓] 3.2 FastAPI бэкенд
 - Сохранение/загрузка графов (JSON → файл)
 - API: POST /save, GET /load, GET /list
 - Сохранение истории (опционально)
@@ -159,6 +159,6 @@
 | 2.1 export.ts | [ ] | — |
 | 2.2 ExportModal | [ ] | — |
 | 3.1 Import | [ ] | — |
-| 3.2 Backend | [ ] | — |
+| 3.2 Backend | [✓] | 27 июл |
 | 3.3 Docker | [ ] | — |
 | 4.1 gbrain | [ ] | — |
