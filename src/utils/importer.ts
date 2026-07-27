@@ -45,8 +45,8 @@ export function importFlowFromPython(pythonCode: string): { nodes: Node[]; edges
   if (!classMatch) return null;
 
   // ── Step 2: split into method blocks ──
-  // Each block starts with 'def ' at a line boundary and contains its decorators + body
-  const allParts = pythonCode.split(/\n(?=def\s+\w+\s*\()/);
+  // Split on decorator lines so each block = decorator(s) + def + body
+  const allParts = pythonCode.split(/\n(?=\s*@(?:start|listen|router)\b)/);
 
   const methodInfos: MethodInfo[] = parseMethodBlocks(allParts);
   if (methodInfos.length === 0) return null;
