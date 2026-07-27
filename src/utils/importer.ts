@@ -4,58 +4,98 @@ import { FlowMethodData, FlowEdgeData, AgentData } from '../types';
 
 const getId = () => `import_node_${uuidv4()}`;
 
+interface MethodInfo {
+  name: string;
+  decoratorType: 'start' | 'listen' | 'router' | 'none';
+  /** Events this method listens to (from @listen or resolved variable refs) */
+  listenEvents: string[];
+  /** For @router: the variable/method name it routes on */
+  routerInput: string;
+  /** Body text after the def line (includes Agent(...) if present) */
+  body: string;
+}
+
+// ──────────────────────────────────────────────────────────
+// Public API
+// ──────────────────────────────────────────────────────────
+
 /**
- * Parse a Python CrewAI Flow class source code into a graph of nodes and edges.
- * Handles real-world patterns:
- *   - @router(variable), @listen(variable), @listen(or_(...)) with mixed vars/strings
- *   - Multi-line role/goal/backstory in parenthesised strings
- *   - tools=[var1, var2, *SPREAD] lists
- *   - Agents without explicit role/goal/backstory (from **dict unpacking)
- * Returns null if the code doesn't contain a valid Flow class.
+ * Parse a real-world CrewAI Flow Python class into a graph of nodes and edges.
+ *
+ * Handles all patterns from the production crewai-router-flow main.py:
+ *   - `@start()` → StartNode
+ *   - `@listen("event")` → ListenNode with string event
+ *   - `@listen(variable_name)` → ListenNode resolved to method reference
+ *   - `@listen(or_(mixed, "strings", variables))` → ListenNode with multiple events
+ *   - `@router(variable_name)` → RouterNode wired to a source method
+ *   - Multi-line Agent(role=(...), goal=(...), backstory=(...)) with f-strings,
+ *     concatenated strings, indented parenthesised blocks
+ *   - tools=[var, *SPREAD, another_var]
+ *   - llm from **HEAVY_AGENT / **PRO_AGENT / **LIGHT_AGENT / **BASE_AGENT
+ *   - handle_general-style methods with no Agent (LLM direct call)
+ *   - methods with Agent but no tools/skills/mcps (e.g. review_verdict, handle_reflection)
+ *
+ * @returns null if the code doesn't contain a viable Flow class, or {nodes, edges}
  */
 export function importFlowFromPython(pythonCode: string): { nodes: Node[]; edges: Edge[] } | null {
   if (!pythonCode || typeof pythonCode !== 'string') return null;
 
-  const nodes: Node[] = [];
-  const edges: Edge[] = [];
-
+  // ── Step 1: detect class ...(Flow[...]) ──
   const classMatch = pythonCode.match(/class\s+(\w+)\s*\(Flow\[/);
   if (!classMatch) return null;
 
-  // Split method blocks by 'def ' at line-start
+  // ── Step 2: split into method blocks ──
+  // Each block starts with 'def ' at a line boundary and contains its decorators + body
   const allParts = pythonCode.split(/\n(?=def\s+\w+\s*\()/);
 
-  interface MethodInfo {
-    name: string;
-    decoratorType: 'start' | 'listen' | 'router' | 'none';
-    /** Events this method listens to (from @listen or @router variable) */
-    listenEvents: string[];
-    /** For router: the variable/method name it's wired to */
-    routerInput: string;
-    body: string;
+  const methodInfos: MethodInfo[] = parseMethodBlocks(allParts);
+  if (methodInfos.length === 0) return null;
+
+  // ── Step 3: build node ID map and sort ──
+  const methodNameToNodeId: Record<string, string> = {};
+  for (const m of methodInfos) {
+    methodNameToNodeId[m.name] = getId();
   }
 
-  const methodInfos: MethodInfo[] = [];
+  // ── Step 4: create nodes with positions ──
+  const { nodes, edges } = buildNodesAndEdges(methodInfos, methodNameToNodeId);
+
+  return { nodes, edges };
+}
+
+// ──────────────────────────────────────────────────────────
+// Parsing: method blocks → MethodInfo[]
+// ──────────────────────────────────────────────────────────
+
+function parseMethodBlocks(allParts: string[]): MethodInfo[] {
+  const results: MethodInfo[] = [];
 
   for (const part of allParts) {
     const lines = part.split('\n');
     const decoratorLines: string[] = [];
     let defLineIdx = -1;
 
-    // Find the 'def' line (scan backwards)
+    // Find the 'def' line (scan from bottom)
     for (let i = lines.length - 1; i >= 0; i--) {
-      const trimmed = lines[i].trim();
-      if (trimmed.startsWith('def ')) { defLineIdx = i; break; }
+      if (lines[i].trim().startsWith('def ')) {
+        defLineIdx = i;
+        break;
+      }
     }
     if (defLineIdx < 0) continue;
 
-    // Collect decorators above def
+    // Collect decorators (@...) directly above def
     for (let i = defLineIdx - 1; i >= 0; i--) {
       const trimmed = lines[i].trim();
       if (trimmed.startsWith('@')) {
         decoratorLines.unshift(trimmed);
-      } else if (trimmed === '' || trimmed.startsWith('#') || trimmed.startsWith('"""') || trimmed.startsWith("'''")) {
-        continue;
+      } else if (
+        trimmed === '' ||
+        trimmed.startsWith('#') ||
+        trimmed.startsWith('"""') ||
+        trimmed.startsWith("'''")
+      ) {
+        continue; // skip blanks and comments
       } else {
         break;
       }
@@ -66,108 +106,123 @@ export function importFlowFromPython(pythonCode: string): { nodes: Node[]; edges
     const methodName = defMatch[1];
     const body = lines.slice(defLineIdx + 1).join('\n');
 
-    let decoratorType: 'start' | 'listen' | 'router' | 'none' = 'none';
-    let listenEvents: string[] = [];
-    let routerInput = '';
+    const parsed = parseDecorators(decoratorLines);
+    if (!parsed) continue;
 
-    for (const dec of decoratorLines) {
-      if (dec.match(/^@start\s*\(\)/)) {
-        decoratorType = 'start';
-        continue;
-      }
-
-      // @router(variable_name) or @router("string")
-      const routerMatch = dec.match(/^@router\s*\((.*)\)\s*$/);
-      if (routerMatch) {
-        decoratorType = 'router';
-        const inner = routerMatch[1].trim();
-        if (inner.startsWith('"') || inner.startsWith("'")) {
-          routerInput = inner.replace(/["']/g, '');
-        } else {
-          routerInput = inner; // variable name (method reference)
-        }
-        continue;
-      }
-
-      // @listen(...)
-      const listenMatch = dec.match(/^@listen\s*\((.*)\)\s*$/);
-      if (listenMatch) {
-        decoratorType = 'listen';
-        const inner = listenMatch[1].trim();
-        // or_(...) with mixed arguments
-        const orMatch = inner.match(/^or_\s*\((.*)\)\s*$/s);
-        if (orMatch) {
-          listenEvents = parseOrArgs(orMatch[1].trim());
-        } else {
-          // Single argument: string or variable
-          const sq = inner.match(/^["']([^"']*)["']$/);
-          if (sq) {
-            listenEvents = [sq[1]];
-          } else {
-            // Variable name reference
-            const varMatch = inner.match(/^(\w+)$/);
-            if (varMatch) {
-              listenEvents = [varMatch[1]];
-            }
-          }
-        }
-        continue;
-      }
-    }
-
-    methodInfos.push({
+    results.push({
       name: methodName,
-      decoratorType,
-      listenEvents,
-      routerInput,
+      decoratorType: parsed.type,
+      listenEvents: parsed.listenEvents,
+      routerInput: parsed.routerInput,
       body,
     });
   }
 
-  if (methodInfos.length === 0) return null;
+  return results;
+}
 
-  // Phase 1: Build node ID map
-  const methodNameToNodeId: Record<string, string> = {};
+interface DecoratorParseResult {
+  type: 'start' | 'listen' | 'router' | 'none';
+  listenEvents: string[];
+  routerInput: string;
+}
 
-  // Order: start first, then router, then listen
-  const sorted = [...methodInfos].sort((a, b) => {
+function parseDecorators(lines: string[]): DecoratorParseResult | null {
+  let type: 'start' | 'listen' | 'router' | 'none' = 'none';
+  let listenEvents: string[] = [];
+  let routerInput = '';
+
+  for (const dec of lines) {
+    // @start()
+    if (dec.match(/^@start\s*\(\)/)) {
+      type = 'start';
+      continue;
+    }
+
+    // @router(variable) or @router("string")
+    const routerMatch = dec.match(/^@router\s*\((.*)\)\s*$/);
+    if (routerMatch) {
+      type = 'router';
+      const inner = routerMatch[1].trim();
+      routerInput = inner.startsWith('"') || inner.startsWith("'")
+        ? inner.replace(/["']/g, '')
+        : inner; // variable name (method reference)
+      continue;
+    }
+
+    // @listen(...)
+    const listenMatch = dec.match(/^@listen\s*\((.*)\)\s*$/);
+    if (listenMatch) {
+      type = 'listen';
+      const inner = listenMatch[1].trim();
+
+      // or_(arg1, arg2, ...) — mixed strings + variables
+      const orMatch = inner.match(/^or_\s*\((.*)\)\s*$/s);
+      if (orMatch) {
+        listenEvents = parseOrArgs(orMatch[1].trim());
+      } else {
+        // Single argument: "string" or variable_name
+        const sq = inner.match(/^["']([^"']*)["']$/);
+        if (sq) {
+          listenEvents = [sq[1]];
+        } else {
+          const varMatch = inner.match(/^(\w+)$/);
+          if (varMatch) {
+            listenEvents = [varMatch[1]];
+          }
+        }
+      }
+      continue;
+    }
+  }
+
+  return { type, listenEvents, routerInput };
+}
+
+// ──────────────────────────────────────────────────────────
+// Graph construction: nodes + edges
+// ──────────────────────────────────────────────────────────
+
+function buildNodesAndEdges(
+  infos: MethodInfo[],
+  nameToId: Record<string, string>,
+): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+
+  // Sort: start first, then router, then listen
+  const sorted = [...infos].sort((a, b) => {
     const order: Record<string, number> = { start: 0, router: 1, listen: 2, none: 99 };
     return (order[a.decoratorType] ?? 99) - (order[b.decoratorType] ?? 99);
   });
 
-  sorted.forEach((m) => {
-    const nodeId = getId();
-    methodNameToNodeId[m.name] = nodeId;
-  });
+  // Collect listen names for two-column layout
+  const listenNames: string[] = sorted
+    .filter((m) => m.decoratorType === 'listen')
+    .map((m) => m.name);
 
-  // Phase 2: Create nodes
-  const leftX = 250;
-  const rightX = 650;
+  const START_Y = 60;
+  const STEP_Y = 180;
+  const LEFT_X = 250;
+  const RIGHT_X = 650;
 
-  // Collect listen node names for two-column positioning
-  const listenNames: string[] = [];
-  for (const m of sorted) {
-    if (m.decoratorType === 'listen') listenNames.push(m.name);
-  }
-
-  let startY = 60;
-  const stepY = 180;
-
+  // ── Create nodes ──
   sorted.forEach((m, idx) => {
-    const nodeId = methodNameToNodeId[m.name];
+    const nodeId = nameToId[m.name];
     if (!nodeId) return;
 
     const agent = extractAgentFromBody(m.body);
-    let x = leftX;
+
+    // Position: start → left, router → shifted right, listen → two columns
+    let x = LEFT_X;
     if (m.decoratorType === 'router') {
-      x = leftX + 180;
+      x = LEFT_X + 180;
     } else if (m.decoratorType === 'listen') {
-      // Two-column listen layout
       const li = listenNames.indexOf(m.name);
-      x = li % 2 === 0 ? rightX - 100 : rightX + 100;
+      x = li % 2 === 0 ? RIGHT_X - 100 : RIGHT_X + 100;
     }
 
-    const yPos = startY + idx * stepY;
+    const yPos = START_Y + idx * STEP_Y;
 
     const baseData: FlowMethodData = {
       method_name: m.name,
@@ -178,85 +233,74 @@ export function importFlowFromPython(pythonCode: string): { nodes: Node[]; edges
     };
 
     if (m.decoratorType === 'start') {
-      baseData.router_events = [m.name]; // start emits its method name
-      nodes.push({
-        id: nodeId,
-        type: 'start',
-        position: { x, y: yPos },
-        data: baseData,
-      });
+      // @start emits its method name as an event
+      baseData.router_events = [m.name];
+      nodes.push({ id: nodeId, type: 'start', position: { x, y: yPos }, data: baseData });
     } else if (m.decoratorType === 'listen') {
       baseData.listen_events = m.listenEvents;
-      nodes.push({
-        id: nodeId,
-        type: 'listen',
-        position: { x, y: yPos },
-        data: baseData,
-      });
+      nodes.push({ id: nodeId, type: 'listen', position: { x, y: yPos }, data: baseData });
     } else if (m.decoratorType === 'router') {
       baseData.router_events = m.routerInput ? [m.routerInput] : [];
-      nodes.push({
-        id: nodeId,
-        type: 'router',
-        position: { x, y: yPos },
-        data: baseData,
-      });
+      nodes.push({ id: nodeId, type: 'router', position: { x, y: yPos }, data: baseData });
     }
   });
 
-  // Phase 3: Edge construction
-  // For each method that has listenEvents or routerInput, find matching sources
-  for (const m of methodInfos) {
-    const targetId = methodNameToNodeId[m.name];
+  // ── Build edges ──
+  // Strategy:
+  //   1. @listen with variable events (method names) → connect from that method
+  //   2. @listen with string events → connect from the FIRST @router in the list
+  //      (typically the classifier router), since we can't statically determine
+  //      which router emits which category string
+  //   3. @router → connect from the source method specified in routerInput
+  //
+  // Known limitation: "approved" could come from builder_verify or review_verdict,
+  // but we connect from the first router. Users can adjust edges in the editor.
+
+  // Find the primary (first) router
+  const firstRouter = sorted.find((m) => m.decoratorType === 'router');
+  const firstRouterId = firstRouter ? nameToId[firstRouter.name] : undefined;
+
+  for (const m of infos) {
+    const targetId = nameToId[m.name];
     if (!targetId) continue;
 
     if (m.decoratorType === 'listen' && m.listenEvents.length > 0) {
       for (const event of m.listenEvents) {
-        // Try to resolve as method name first (e.g. @listen(builder_plan) → find node for builder_plan)
-        const resolvedSrcId = methodNameToNodeId[event];
+        // 1. Try to resolve as a method name (variable reference like @listen(builder_plan))
+        const resolvedSrcId = nameToId[event];
         if (resolvedSrcId) {
           edges.push(makeEdge(resolvedSrcId, targetId, event));
           continue;
         }
-        // String event (e.g. "sage", "builder", "approved") — connect from all routers
-        // since routers emit category strings or verdict signals
-        for (const rm of methodInfos) {
-          if (rm.decoratorType === 'router') {
-            const srcId = methodNameToNodeId[rm.name];
-            if (srcId && srcId !== targetId) {
-              edges.push(makeEdge(srcId, targetId, event));
-            }
-          }
+
+        // 2. String event — connect from the primary router
+        if (firstRouterId && firstRouterId !== targetId) {
+          edges.push(makeEdge(firstRouterId, targetId, event));
         }
       }
     }
 
     if (m.decoratorType === 'router' && m.routerInput) {
-      // Router listens to a specific method's event
-      const srcId = methodNameToNodeId[m.routerInput];
+      const srcId = nameToId[m.routerInput];
       if (srcId) {
         edges.push(makeEdge(srcId, targetId, m.routerInput));
       }
     }
-
-    // For start methods, connect to the next important node if they have no router/listen edge from themselves
-    // Already handled: @start emits its method name, routers/listeners pick it up
   }
 
-  // Phase 4: For listen events that are still unresolved (no edges), connect from the nearest router
-  const resolvedTargets = new Set(edges.map(e => e.target));
-  for (const m of methodInfos) {
-    const targetId = methodNameToNodeId[m.name];
+  // ── Fallback: connect unresolved listen nodes to the nearest source ──
+  const resolvedTargets = new Set(edges.map((e) => e.target));
+  for (const m of infos) {
+    const targetId = nameToId[m.name];
     if (!targetId || resolvedTargets.has(targetId)) continue;
     if (m.decoratorType !== 'listen') continue;
 
-    // Find any router above this method
-    for (const rm of methodInfos) {
+    // Find the first router above this method in source order
+    for (const rm of infos) {
       if (rm.decoratorType === 'router') {
-        const srcId = methodNameToNodeId[rm.name];
+        const srcId = nameToId[rm.name];
         if (srcId) {
-          const eventName = m.listenEvents[0] || m.name;
-          edges.push(makeEdge(srcId, targetId, eventName));
+          edges.push(makeEdge(srcId, targetId, m.listenEvents[0] || m.name));
           break;
         }
       }
@@ -266,7 +310,11 @@ export function importFlowFromPython(pythonCode: string): { nodes: Node[]; edges
   return { nodes, edges };
 }
 
-/** Make a single edge helper */
+// ──────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────
+
+/** Create a single edge with event metadata */
 function makeEdge(source: string, target: string, eventName?: string): Edge {
   return {
     id: `edge_${uuidv4()}`,
@@ -282,24 +330,29 @@ function makeEdge(source: string, target: string, eventName?: string): Edge {
   };
 }
 
+// ──────────────────────────────────────────────────────────
+// or_(...) parser
+// ──────────────────────────────────────────────────────────
+
 /**
- * Parse the inner content of or_(...) — handles mixed quoted strings and variable names:
- *   or_(builder_plan, "builder_changes_requested", "reviewer_changes_requested")
- *   or_("approved", "blocked", "escalated")
+ * Parse the inner content of `or_(...)`.
+ *
+ * Handles mixed quoted strings and bare variable names:
+ * ```
+ * or_(builder_plan, "builder_changes_requested", "reviewer_changes_requested")
+ * or_("approved", "blocked", "escalated")
+ * ```
  */
 function parseOrArgs(inner: string): string[] {
   const results: string[] = [];
-  // Tokenize: split by comma but respect quoted strings
   const tokens = splitByCommaOutsideQuotes(inner);
   for (const token of tokens) {
     const t = token.trim();
     if (t.length === 0) continue;
-    // Check if it's a quoted string
     const sq = t.match(/^["']([^"']*)["']$/);
     if (sq) {
       results.push(sq[1]);
     } else {
-      // It's a variable (method name reference) — remove any trailing whitespace/comments
       const varMatch = t.match(/^(\w+)/);
       if (varMatch) {
         results.push(varMatch[1]);
@@ -310,8 +363,8 @@ function parseOrArgs(inner: string): string[] {
 }
 
 /**
- * Split a string by commas that are NOT inside quoted strings.
- * Handles nested parentheses inside quotes gracefully.
+ * Split a string by commas that are NOT inside quoted strings or brackets.
+ * Tracks bracket/paren depth so commas inside function calls are ignored.
  */
 function splitByCommaOutsideQuotes(s: string): string[] {
   const parts: string[] = [];
@@ -347,61 +400,44 @@ function splitByCommaOutsideQuotes(s: string): string[] {
   return parts;
 }
 
+// ──────────────────────────────────────────────────────────
+// Agent(...) extractor
+// ──────────────────────────────────────────────────────────
+
 /**
  * Extract Agent(...) from a method body.
- * Handles:
- *   - Multi-line role/goal/backstory in parenthesised string literals "..." or (...)
- *   - f-strings (role=f"...")
- *   - Concatenated strings (role="..." "...")
- *   - tools=[var, *spread, var2]
- *   - llm from **dict unpacking (**HEAVY_AGENT, **LIGHT_AGENT, **PRO_AGENT)
- *   - No Agent present at all (returns null)
+ *
+ * Handles real-world patterns from crewai-router-flow main.py:
+ *   - Multi-line role/goal/backstory in parenthesised strings:
+ *       role=("Multi-line string with\n" "concatenation")
+ *   - f-strings: role=f"Hello {name}"
+ *   - Parenthesised concatenation: role=("part1" "part2")
+ *   - tools=[tavily_tool, *GBRAIN_TOOLS, var]
+ *   - llm inferred from **HEAVY_AGENT, **PRO_AGENT, **LIGHT_AGENT, **BASE_AGENT
+ *   - Agent without role= (just goal=, backstory=, **DICT)
+ *   - methods with NO Agent at all (handle_general) → returns null
+ *   - methods with Agent but no tools/mcps (review_verdict, handle_reflection)
  */
 function extractAgentFromBody(body: string): AgentData | null {
-  // Find the Agent(...) call with balanced parentheses
+  // ── Find Agent( ... ) with balanced parens ──
   const agentStart = body.match(/Agent\s*\(/);
   if (!agentStart) return null;
 
-  const startIdx = (agentStart.index ?? 0) + agentStart[0].length;
-  const depth = findBalancedParen(body, startIdx - 1);
-  if (depth < 0) return null;
+  const openIdx = (agentStart.index ?? 0) + agentStart[0].length - 1; // index of '('
+  const closeIdx = findBalancedParen(body, openIdx);
+  if (closeIdx < 0) return null;
 
-  const argsStr = body.slice(startIdx, depth);
+  // Everything between Agent( and the matching )
+  const argsStr = body.slice(openIdx + 1, closeIdx).trim();
 
   const role = extractStrArg(argsStr, 'role');
   const goal = extractStrArg(argsStr, 'goal');
   const backstory = extractStrArg(argsStr, 'backstory');
-
-  // If no explicit role/goal/backstory, the Agent gets them from **dict unpacking
-  // Still create a node but with empty fields
-  const name = extractGenerator(argsStr, 'name')
-    || extractGenerator(argsStr, 'role')
-    || 'Unnamed Agent';
-
+  const name = extractGenerator(argsStr, 'name') || extractGenerator(argsStr, 'role') || 'Unnamed Agent';
   const tools = extractToolList(argsStr);
   const llm = extractLlm(argsStr);
 
-  if (!role && !goal) {
-    // Agent exists but without explicit role/goal (e.g., from **HEAVY_AGENT)
-    return {
-      name,
-      role: '',
-      goal: '',
-      backstory: '',
-      tools,
-      llm,
-      allowDelegation: false,
-      verbose: true,
-      maxIter: 25,
-      maxRpm: 0,
-      memory: true,
-      cacheEnabled: true,
-      allowCodeExecution: false,
-      maxRetryLimit: 2,
-    };
-  }
-
-  return {
+  const defaults = {
     name,
     role: role.slice(0, 200),
     goal: goal.slice(0, 200),
@@ -417,10 +453,18 @@ function extractAgentFromBody(body: string): AgentData | null {
     allowCodeExecution: false,
     maxRetryLimit: 2,
   };
+
+  // If Agent exists but has no role/goal/backstory (from **dict completely)
+  if (!role && !goal) {
+    return { ...defaults, role: '', goal: '', backstory: '' };
+  }
+
+  return defaults;
 }
 
 /**
- * Find the index of the closing paren matching the opening paren at openIdx.
+ * Find the index of the closing paren/bracket matching the opener at `openIdx`.
+ * Handles quoted strings with escape sequences.
  */
 function findBalancedParen(s: string, openIdx: number): number {
   let depth = 0;
@@ -437,8 +481,8 @@ function findBalancedParen(s: string, openIdx: number): number {
       inQuote = ch;
       continue;
     }
-    if (ch === '(') depth++;
-    if (ch === ')') {
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    if (ch === ')' || ch === ']' || ch === '}') {
       depth--;
       if (depth === 0) return i;
     }
@@ -447,8 +491,13 @@ function findBalancedParen(s: string, openIdx: number): number {
 }
 
 /**
- * Extract a string argument value like role="..." or role=(...)
- * Handles: role="string", role=("multi", "line"), role=f"...", role=("..." "...")
+ * Extract a named string argument value.
+ *
+ * Handles:
+ *   role="simple string"
+ *   role=("multi-line\n" "concatenated")
+ *   role=f"interpolated"
+ *   role=("multi " "line")
  */
 function extractStrArg(args: string, key: string): string {
   const re = new RegExp(`\\b${key}\\s*=\\s*`, 'm');
@@ -456,27 +505,24 @@ function extractStrArg(args: string, key: string): string {
   if (!match) return '';
 
   let idx = match.index + match[0].length;
-  // Skip whitespace
+  // Skip whitespace / newlines
   while (idx < args.length && (args[idx] === ' ' || args[idx] === '\n' || args[idx] === '\r')) idx++;
-
   if (idx >= args.length) return '';
 
-  // Check if it starts with parenthesis (multiline)
+  // Parenthesised multi-line string: role=("..." "...")
   if (args[idx] === '(') {
-    // Collect content inside parens
     const endIdx = findBalancedParen(args, idx);
     if (endIdx < 0) return '';
     const inner = args.slice(idx + 1, endIdx).trim();
-    // The inner may be concatenated strings: "..." "\n" "..."
     return extractConcatenatedStrings(inner);
   }
 
-  // f-string or regular string
+  // f-string prefix
   if (args[idx] === 'f' && idx + 1 < args.length && (args[idx + 1] === '"' || args[idx + 1] === "'")) {
-    idx++; // skip 'f'
+    idx++;
   }
 
-  // Single quoted string
+  // Simple quoted string
   if (args[idx] === '"' || args[idx] === "'") {
     const quote = args[idx];
     let end = idx + 1;
@@ -491,14 +537,16 @@ function extractStrArg(args: string, key: string): string {
 }
 
 /**
- * Extract concatenated strings: "part1" "part2" "part3"
- * This matches the pattern within parenthesised role/goal/backstory.
+ * Extract text from concatenated string literals:
+ *   "part1" "part2" "part3"  → "part1 part2 part3"
+ *
+ * Used inside parenthesised role=(...) blocks.
  */
 function extractConcatenatedStrings(s: string): string {
   const parts: string[] = [];
   let pos = 0;
   while (pos < s.length) {
-    // Skip whitespace and newlines
+    // Skip whitespace / newlines between string literals
     while (pos < s.length && (s[pos] === ' ' || s[pos] === '\n' || s[pos] === '\r' || s[pos] === '\t')) pos++;
     if (pos >= s.length) break;
 
@@ -526,7 +574,7 @@ function extractConcatenatedStrings(s: string): string {
       }
       parts.push(strPart);
     } else {
-      // Not a string — skip to next string
+      // Non-string content — skip (e.g. Python comments between strings)
       pos++;
     }
   }
@@ -534,7 +582,7 @@ function extractConcatenatedStrings(s: string): string {
 }
 
 /**
- * Extract a generator/name-like argument (simple string, not multiline)
+ * Extract a simple quoted value (name="value").
  */
 function extractGenerator(args: string, key: string): string {
   const re = new RegExp(`\\b${key}\\s*=\\s*["']([^"']*)["']`, 'm');
@@ -543,21 +591,23 @@ function extractGenerator(args: string, key: string): string {
 }
 
 /**
- * Extract tool variable names from tools=[...]
- * Handles: [tavily_tool, serper_tool, *GBRAIN_TOOLS_FOUNDATION, *PERSONA_TOOLS_DEFAULT]
+ * Extract tool variable names from tools=[...].
+ *
+ * Handles:
+ *   tools=[tavily_tool, serper_tool]
+ *   tools=[*GBRAIN_TOOLS_BUILDER, *PERSONA_TOOLS_DEFAULT, *SHELL_TOOLS_DEFAULT]
+ *   No tools= at all → empty array
  */
 function extractToolList(args: string): string[] {
   const toolsMatch = args.match(/tools\s*=\s*\[([\s\S]*?)\]/);
   if (!toolsMatch) return [];
-  const inner = toolsMatch[1];
-  const items = splitByCommaOutsideQuotes(inner);
+  const items = splitByCommaOutsideQuotes(toolsMatch[1]);
   const result: string[] = [];
   for (const item of items) {
     const t = item.trim();
     if (!t) continue;
-    // Remove * prefix for spread vars
+    // Remove * prefix for spread vars: *GBRAIN_TOOLS → GBRAIN_TOOLS
     const clean = t.replace(/^\*+/, '');
-    // Only keep identifiers (variable names), skip literals
     if (/^[a-zA-Z_]\w*$/.test(clean)) {
       result.push(clean);
     }
@@ -567,33 +617,30 @@ function extractToolList(args: string): string[] {
 
 /**
  * Extract LLM model name from **dict unpacking or explicit llm= argument.
- * Checks for **HEAVY_AGENT, **PRO_AGENT, **LIGHT_AGENT, **BASE_AGENT
- * which contain llm=reasoning_llm, llm=light_llm, llm=classifier_llm
- * Also checks for explicit llm=LLM(...) or llm='model-name'
+ *
+ * Resolution order:
+ *   1. Explicit llm='model-name'
+ *   2. **HEAVY_AGENT / **PRO_AGENT  → 'reasoning_llm'
+ *   3. **LIGHT_AGENT                → 'light_llm'
+ *   4. **BASE_AGENT                 → 'deepseek-v4-flash'
+ *   5. llm=LLM(...)                 → 'LLM(...)'
+ *   6. llm=variable_name            → variable name
+ *   7. fallback                     → 'gpt-4o'
  */
 function extractLlm(args: string): string {
-  // Check for explicit llm='model' or llm="model"
+  // 1. Explicit string
   const explicitMatch = args.match(/\bllm\s*=\s*["']([^"']+)["']/);
   if (explicitMatch) return explicitMatch[1];
 
-  // Check for **HEAVY_AGENT, **PRO_AGENT → implies reasoning_llm
-  if (/\*\*HEAVY_AGENT/.test(args) || /\*\*PRO_AGENT/.test(args)) {
-    return 'reasoning_llm';
-  }
-  // Check for **LIGHT_AGENT → implies light_llm
-  if (/\*\*LIGHT_AGENT/.test(args)) {
-    return 'light_llm';
-  }
-  // Check for **BASE_AGENT → implies deepseek-v4-flash
-  if (/\*\*BASE_AGENT/.test(args)) {
-    return 'deepseek-v4-flash';
-  }
-
-  // Try llm=LLM(**...)
-  const llmLiteral = args.match(/\bllm\s*=\s*LLM\s*\(/);
-  if (llmLiteral) return 'LLM(...)';
-
-  // Check llm=variable_name
+  // 2. **HEAVY_AGENT or **PRO_AGENT
+  if (/\*\*HEAVY_AGENT/.test(args) || /\*\*PRO_AGENT/.test(args)) return 'reasoning_llm';
+  // 3. **LIGHT_AGENT
+  if (/\*\*LIGHT_AGENT/.test(args)) return 'light_llm';
+  // 4. **BASE_AGENT
+  if (/\*\*BASE_AGENT/.test(args)) return 'deepseek-v4-flash';
+  // 5. llm=LLM(...)
+  if (/\bllm\s*=\s*LLM\s*\(/.test(args)) return 'LLM(...)';
+  // 6. llm=variable_name
   const llmVar = args.match(/\bllm\s*=\s*(\w+)/);
   if (llmVar) return llmVar[1];
 
